@@ -1,0 +1,105 @@
+##
+# tasks/main.yml in ansible-role-deploy-img
+#
+# Download, extract, prepare and "burn" an image, often to removable media
+##
+
+#TODO: This needs to be run on localhost
+#TODO: Only on macOS
+#TODO: 
+- name: Task 10 - Download image
+  ansible.builtin.get_url:
+    url: "{{ deploy_host_img[ansible_architecture].url }}"
+    dest: "/tmp/{{ deploy_host_img[ansible_architecture].dest }}"
+    checksum: "{{ deploy_host_img[ansible_architecture].checksum }}"
+  delegate_to: "{{ delegate }}"
+
+- name: Task 20 - Extract image
+  ansible.builtin.unarchive:
+    src: "/tmp/{{ deploy_host_img[ansible_architecture].dest }}"
+    dest: "/tmp/"
+    remote_src: yes
+#  ansible.builtin.command:
+#    cmd: unxz -k "/tmp/{{ deploy_host_image[ansible_architecture].dest }}"
+  delegate_to: "{{ delegate }}"
+
+- name: Task 30 - Make copy of image for host
+  ansible.builtin.copy:
+    src: "/tmp/{{ deploy_host_img[ansible_architecture].dest }}"
+    dest: "/tmp/{{ inventory_hostname }}.img"
+  delegate_to: "{{ delegate }}"
+
+- name: Task 40 - Mount image
+  ansible.builtin.command:
+    cmd: hdiutil attach "/tmp/{{ inventory_hostname }}.img"
+  register: attach_out
+  delegate_to: "{{ delegate }}"
+
+- name: Task 41 - system boot
+  set_fact:
+    attach_volume: "{{ attach_out.stdout | regex_search('\\b(/Volumes/[^ ]*)\\b','\\1', multiline=True) }}"
+- name: Task 41 - device
+  set_fact:
+    attach_device: "{{ attach_out.stdout | regex_search('(/dev/disk[0-9]).*','\\1', multiline=True) }}"
+  delegate_to: "{{ delegate }}"
+
+- name: Task 50 - Customize network configuration
+  blockinfile:
+    path: "{{ attach_volume }}/network-config"
+    create: yes
+    state: present
+    #mode: '0660'
+    #owner: libvirt-qemu
+    #group: kvm
+    block: "{{ lookup('template', 'network_config.j2') }}"
+    #marker: "# {mark} Network configuration for {{ kvm_guest.kvm_guest_bridge }}"
+  delegate_to: "{{ delegate }}"
+
+- name: Task 60 - Customize first boot configuration
+  template:
+    src: "cloud_init.j2"
+    dest: "{{ attach_volume }}/user-data"
+    #mode: '0660'
+    #owner: libvirt-qemu
+    #group: kvm
+  delegate_to: "{{ delegate }}"
+
+- name: Task 70 - Unmount image
+  ansible.builtin.command:
+    cmd: hdiutil detach "{{ attach_device }}"
+  delegate_to: "{{ delegate }}"
+
+- name: Task 80 - Request user make SD card available
+  delegate_to: "{{ delegate }}"
+
+- name: Task 90 - Check SD card device
+  command:
+    cmd: diskutil list internal physical
+  register: diskutil_out
+  delegate_to: "{{ delegate }}"
+
+- name:
+  debug:
+    var: diskutil_out
+  delegate_to: "{{ delegate }}"
+
+- name: Task 91 - Get SD card device
+  set_fact:
+    SD_card_device: "{{ diskutil_out.stdout | regex_search('(/dev/disk[0-9]).*','\\1', multiline=True) }}"
+  delegate_to: "{{ delegate }}"
+
+- name:
+  debug:
+    var: SD_card_device
+#- name: Task 100 - Confirm device
+  delegate_to: "{{ delegate }}"
+
+- name: Task 110 - Write image to media
+  command:
+    cmd: "dcfldd if=/tmp/{{ inventory_hostname }}.img of={{ SD_card_device }} bs=1M"
+  delegate_to: "{{ delegate }}"
+
+- name: Task 120 - Eject media
+  command:
+    cmd: "diskutil eject {{ SD_card_device }}"
+  delegate_to: "{{ delegate }}"
