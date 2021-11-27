@@ -1,0 +1,29 @@
+#cloud-config
+preserve_hostname: false
+hostname: {{ inventory_hostname }}
+fqdn: {{ inventory_hostname }}.{{ deploy_img_networks[0].search_domain }}
+manage_etc_hosts: true
+users:
+  - name: ansible
+    gecos: bootstrap
+    groups: sudo
+    shell: /bin/bash
+    lock_passwd: True
+    plain_text_passwd: 'testuser'
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    ssh-import-id: lp:jjo93asa
+    ssh_authorized_keys:
+      - ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBPwG3EYtV/5KYfq8mbVMuuyje7JMZ/U53F1CaykMoGQacMFhYQfeYPvyr+GAo8T49AxKtKxb/L6GV+U/q5+W45I= ansible key for boot-strapping
+
+##
+# ssh security
+# only cert auth via ssh (console access can still login)
+ssh_pwauth: false
+# disable root login
+disable_root: true
+runcmd:
+  - sed -i -e '/^#PermitRootLogin/s/^.*$/PermitRootLogin no/' /etc/ssh/sshd_config
+  - restart ssh
+
+# written to /var/log/cloud-init-output.log
+final_message: "The system is finally up, after $UPTIME seconds"

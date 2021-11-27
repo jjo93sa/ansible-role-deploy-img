@@ -13,19 +13,16 @@
     dest: "/tmp/{{ deploy_host_img[ansible_architecture].dest }}"
     checksum: "{{ deploy_host_img[ansible_architecture].checksum }}"
   delegate_to: "{{ delegate }}"
+  become: true
 
 - name: Task 20 - Extract image
-  ansible.builtin.unarchive:
-    src: "/tmp/{{ deploy_host_img[ansible_architecture].dest }}"
-    dest: "/tmp/"
-    remote_src: yes
-#  ansible.builtin.command:
-#    cmd: unxz -k "/tmp/{{ deploy_host_image[ansible_architecture].dest }}"
+  ansible.builtin.command:
+    cmd: unxz -fk "/tmp/{{ deploy_host_img[ansible_architecture].dest }}"
   delegate_to: "{{ delegate }}"
 
 - name: Task 30 - Make copy of image for host
   ansible.builtin.copy:
-    src: "/tmp/{{ deploy_host_img[ansible_architecture].dest }}"
+    src: "/tmp/{{ deploy_host_img[ansible_architecture].img }}"
     dest: "/tmp/{{ inventory_hostname }}.img"
   delegate_to: "{{ delegate }}"
 
@@ -35,33 +32,36 @@
   register: attach_out
   delegate_to: "{{ delegate }}"
 
-- name: Task 41 - system boot
+- name: Task 41 - Get mount point
   set_fact:
-    attach_volume: "{{ attach_out.stdout | regex_search('\\b(/Volumes/[^ ]*)\\b','\\1', multiline=True) }}"
-- name: Task 41 - device
+    attach_volume: "{{ attach_out.stdout | regex_search('.+FAT.+(/Volumes/.+)','\\1', multiline=True) | first }}"
+
+- debug:
+    var: attach_volume
+
+- debug:
+    msg: "{{ attach_volume | type_debug }}"
+
+- name: Task 42 - Get mount device
   set_fact:
-    attach_device: "{{ attach_out.stdout | regex_search('(/dev/disk[0-9]).*','\\1', multiline=True) }}"
+    attach_device: "{{ attach_out.stdout | regex_search('(/dev/disk[0-9])\\b','\\1', multiline=True) | first }}"
   delegate_to: "{{ delegate }}"
 
+- debug:
+    var: attach_device
+
 - name: Task 50 - Customize network configuration
-  blockinfile:
-    path: "{{ attach_volume }}/network-config"
-    create: yes
-    state: present
-    #mode: '0660'
-    #owner: libvirt-qemu
-    #group: kvm
-    block: "{{ lookup('template', 'network_config.j2') }}"
-    #marker: "# {mark} Network configuration for {{ kvm_guest.kvm_guest_bridge }}"
+  template:
+    force: yes
+    src: network_config.j2
+    dest: "{{ attach_volume }}/network-config"
+    backup: yes
   delegate_to: "{{ delegate }}"
 
 - name: Task 60 - Customize first boot configuration
   template:
     src: "cloud_init.j2"
     dest: "{{ attach_volume }}/user-data"
-    #mode: '0660'
-    #owner: libvirt-qemu
-    #group: kvm
   delegate_to: "{{ delegate }}"
 
 - name: Task 70 - Unmount image
@@ -70,36 +70,56 @@
   delegate_to: "{{ delegate }}"
 
 - name: Task 80 - Request user make SD card available
+  pause:
+    prompt: "Make sure the SD card is inserted"
   delegate_to: "{{ delegate }}"
 
-- name: Task 90 - Check SD card device
+- name: Task 90 - List internal physical disks, incl.  SD card
   command:
     cmd: diskutil list internal physical
   register: diskutil_out
   delegate_to: "{{ delegate }}"
 
-- name:
-  debug:
+- debug:
     var: diskutil_out
   delegate_to: "{{ delegate }}"
 
-- name: Task 91 - Get SD card device
+- name: Task 91 - Get SD card mount device
   set_fact:
-    SD_card_device: "{{ diskutil_out.stdout | regex_search('(/dev/disk[0-9]).*','\\1', multiline=True) }}"
+    SD_card_device: "{{ diskutil_out.stdout | regex_search('[\\s\\S]*Apple_APFS[\\s\\S]*(/dev/disk[1-9])','\\1', multiline=True) | first }}"
   delegate_to: "{{ delegate }}"
 
-- name:
-  debug:
+- debug:
     var: SD_card_device
-#- name: Task 100 - Confirm device
   delegate_to: "{{ delegate }}"
 
-- name: Task 110 - Write image to media
+- debug:
+    msg: "{{ SD_card_device | type_debug }}"
+
+- name: Task 100 - Request user make SD card available
+  pause:
+    prompt: "Make sure the SD card is inserted"
+  delegate_to: "{{ delegate }}"
+
+#TODO: Might need to check what's mounted first
+- name: Task 110 - unmount disk
+  command:
+    cmd: diskutil unmountDisk "{{ SD_card_device }}"
+  delegate_to: "{{ delegate }}"
+
+- name: Task 120 - Write image to media
   command:
     cmd: "dcfldd if=/tmp/{{ inventory_hostname }}.img of={{ SD_card_device }} bs=1M"
   delegate_to: "{{ delegate }}"
 
-- name: Task 120 - Eject media
+#TODO: Here we need to determine what, if any volume has been mounted by the
+#system after the image has been written
+- name: Task 130 - Eject media
   command:
     cmd: "diskutil eject {{ SD_card_device }}"
+  delegate_to: "{{ delegate }}"
+
+- name: Task 140 - Request user insert SD card
+  pause:
+    prompt: "Make sure the SD card is transferred to the RPi"
   delegate_to: "{{ delegate }}"

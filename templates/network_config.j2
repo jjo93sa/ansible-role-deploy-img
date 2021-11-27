@@ -1,0 +1,16 @@
+version: 2
+ethernets:
+{% for netif in deploy_img_networks %}
+  {{ netif.interface }}:
+    dhcp4: false
+    optional: true
+    addresses: [ {{ netif.ip_address }}/{{ netif.cidr }} ]
+{% if netif.gateway is defined %}
+    gateway4: {{ netif.gateway }}
+{% endif %}
+{% if netif.search_domain is defined %}
+    nameservers:
+      search: [ {{ netif.search_domain }} ]
+      addresses: [ {{ netif.dns }} ]
+{% endif %}
+{% endfor %}
